@@ -306,7 +306,9 @@ test('a correct accusation ends the case; a wrong one eliminates the detective',
     assert.equal(bad.ok, true);
     if (bad.ok) {
       assert.equal(playerById(bad.state, id)?.eliminated, true);
-      assert.equal(bad.state.phase, 'END_TURN');
+      // The turn ends with the accusation — the witness is never asked to move again.
+      assert.notEqual(bad.state.players[bad.state.turnIndex].id, id);
+      assert.ok(['ROLL', 'GAME_OVER'].includes(bad.state.phase));
     }
   }
   // Now accuse correctly from a fresh table.

@@ -126,6 +126,9 @@ export function Notebook({ state, open, onClose }: Props) {
     <aside className={`drawer${open ? ' open' : ''}`} aria-hidden={!open}>
       <div className="notebook">
         <header className="notebook-head">
+          <span className="nb-seal" aria-hidden>
+            C
+          </span>
           <div style={{ flex: 1 }}>
             <div style={{ fontSize: 10, letterSpacing: '0.34em', textTransform: 'uppercase', color: '#6b4a1c' }}>
               Case File № 1924

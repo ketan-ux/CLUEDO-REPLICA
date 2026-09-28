@@ -10,7 +10,7 @@
  * *before* their own click appended — the "lag compensation" step.
  */
 import { addHuman, createLobby, maskState, playerById, reduce } from '@shared/engine.js';
-import { autoReveal, botDecide, botDisprove, nextFreeSuspect } from '@shared/ai.js';
+import { autoPlayTurn, autoReveal, botDecide, botDisprove, nextFreeSuspect } from '@shared/ai.js';
 import type { Action, GameState, MaskedState } from '@shared/types.js';
 import { createTransport, lookupRoom, relayAvailable, type Transport, type TransportStatus } from '../net/transport';
 
@@ -89,6 +89,7 @@ export class GameStore {
   private transport: Transport | null = null;
   private botTimer: ReturnType<typeof setTimeout> | null = null;
   private promptTimer: ReturnType<typeof setTimeout> | null = null;
+  private absentTimer: ReturnType<typeof setTimeout> | null = null;
   private pendingActionId: string | null = null;
   private pendingSince = 0;
   private actionSeq = 0;
@@ -441,8 +442,10 @@ export class GameStore {
   private clearTimers(): void {
     if (this.botTimer) clearTimeout(this.botTimer);
     if (this.promptTimer) clearTimeout(this.promptTimer);
+    if (this.absentTimer) clearTimeout(this.absentTimer);
     this.botTimer = null;
     this.promptTimer = null;
+    this.absentTimer = null;
   }
 
   private driveHost(): void {
@@ -468,6 +471,16 @@ export class GameStore {
         this.botTimer = null;
         this.dispatch(botReveal, { fromBot: true, silent: true });
       }, thinkTime);
+      return;
+    }
+
+    // A detective who has dropped off mid-turn must not freeze the table.
+    const active = playerById(s, s.players[s.turnIndex].id);
+    if (active && !active.isBot && !active.connected) {
+      this.absentTimer = setTimeout(() => {
+        const auto = autoPlayTurn(this.master ?? s);
+        if (auto) this.dispatch(auto, { fromBot: true, silent: true });
+      }, 25_000);
       return;
     }
 

@@ -299,6 +299,34 @@ export function autoReveal(state: GameState): Action | null {
   return { type: 'DISPROVE', playerId: prompt.playerId, promptId: prompt.id, cardId: card };
 }
 
+/**
+ * Play one step of an absent detective's turn.
+ *
+ * Used only when a human has dropped off the network mid-turn: the host rolls
+ * for them, walks them with the same goal-driven logic the bots use (which
+ * reads nothing but their own hand and the public record) and declines to
+ * suggest or accuse on their behalf.
+ */
+export function autoPlayTurn(state: GameState): Action | null {
+  const p = state.players[state.turnIndex];
+  if (!p || p.isBot) return null;
+  const k = knowledgeFor(state, p.id);
+  switch (state.phase) {
+    case 'ROLL':
+      return { type: 'ROLL', playerId: p.id };
+    case 'MOVE':
+      return chooseMove(state, p, k) ?? { type: 'END_TURN', playerId: p.id };
+    case 'SUGGEST':
+      return { type: 'SKIP_SUGGEST', playerId: p.id };
+    case 'ACCUSE':
+      return { type: 'SKIP_ACCUSE', playerId: p.id };
+    case 'END_TURN':
+      return { type: 'END_TURN', playerId: p.id };
+    default:
+      return null;
+  }
+}
+
 /** Suggested opening move for a bot choosing a seat in the lobby. */
 export function nextFreeSuspect(state: GameState): string | null {
   const taken = new Set(state.players.map((p) => p.suspectId));

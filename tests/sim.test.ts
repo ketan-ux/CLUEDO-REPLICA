@@ -6,7 +6,7 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import { createLobby, maskState, playerById, reduce } from '../shared/engine.js';
-import { botDecide, botDisprove } from '../shared/ai.js';
+import { autoPlayTurn, botDecide, botDisprove } from '../shared/ai.js';
 import { knowledgeFor } from '../shared/deduction.js';
 import { CARD_BY_ID } from '../shared/constants.js';
 import type { GameState } from '../shared/types.js';
@@ -94,8 +94,10 @@ function playGame(seed: number, bots = 6): Outcome {
           // public trio of a suggestion they took part in.
           const legitimatelyShown = view.reveals.some((r) => r.cardId === cardId);
           const inPublicQuery = view.queries.some((q) => q.cards.includes(cardId));
+          // Once the case is closed the envelope is opened to the whole table.
+          const inOpenedEnvelope = !!view.envelope?.includes(cardId);
           assert.ok(
-            legitimatelyShown || inPublicQuery || !JSON.stringify(view).includes(`"${cardId}"`),
+            legitimatelyShown || inPublicQuery || inOpenedEnvelope || !JSON.stringify(view).includes(`"${cardId}"`),
             `hand card ${cardId} leaked to another detective`,
           );
         }
@@ -206,5 +208,57 @@ test('bots never read cards out of someone else\u2019s hand', () => {
     const res = reduce(s, action);
     if (!res.ok) break;
     s = res.state;
+  }
+});
+
+test('an absent detective never freezes the table', () => {
+  // A human who drops off mid-turn: the host rolls for them, walks them with the
+  // same goal-driven logic the bots use, and never suggests or accuses for them.
+  let s: GameState = botTable(6161, 6);
+  // Seat a human at the table, give them the turn, then drop their connection.
+  const index = 0;
+  s = structuredClone(s);
+  s.players.forEach((p) => {
+    p.connected = true;
+  });
+  s.turnIndex = index;
+  s.phase = 'ROLL';
+  s.players[index].isBot = false;
+  s.players[index].connected = false;
+
+  const seen: string[] = [];
+  for (let i = 0; i < 8 && s.phase !== 'GAME_OVER'; i++) {
+    const action = autoPlayTurn(s);
+    if (!action) break;
+    seen.push(action.type);
+    assert.equal(action.playerId, s.players[s.turnIndex].id, 'the host plays only for the absent detective');
+    assert.notEqual(action.type, 'SUGGEST', 'the host never invents a theory for an absent player');
+    assert.notEqual(action.type, 'ACCUSE', 'the host never accuses for an absent player');
+    const res = reduce(s, action);
+    assert.equal(res.ok, true, res.ok ? '' : res.error);
+    s = res.state;
+  }
+  assert.ok(seen.includes('ROLL'), 'the absent detective still rolls');
+  assert.ok(seen.includes('MOVE') || seen.includes('SKIP_SUGGEST'), 'and still takes their turn');
+  assert.notEqual(s.turnIndex, index, 'the turn moved on');
+});
+
+test('a wrong accusation ends the turn at once, with no second click needed', () => {
+  let s: GameState = botTable(8080, 4);
+  const victim = s.players[s.turnIndex].id;
+  s = { ...s, phase: 'ACCUSE' };
+  const res = reduce(s, {
+    type: 'ACCUSE',
+    playerId: victim,
+    suspectId: 'scarlet',
+    weaponId: 'rope',
+    roomId: 'study',
+  });
+  assert.equal(res.ok, true);
+  if (!res.ok) return;
+  const after = playerById(res.state, victim)!;
+  if (after.eliminated) {
+    assert.equal(res.state.phase, 'ROLL', 'play continues immediately for the next detective');
+    assert.notEqual(res.state.players[res.state.turnIndex].id, victim, 'the witness is not asked to move again');
   }
 });

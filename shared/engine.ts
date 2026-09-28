@@ -746,12 +746,8 @@ export function reduce(state: GameState, action: Action): ActionResult {
           accusation: acc,
           text: 'Your accusation was false. You may no longer roll, move or suggest — but your cards remain in play and you must still answer other detectives\u2019 questions.',
         });
-        const left = alivePlayers(s);
-        if (left.length <= 1) {
-          advanceTurn(s);
-        } else {
-          s.phase = 'END_TURN';
-        }
+        s.phase = 'END_TURN';
+        advanceTurn(s);
       }
       return ok(s, [{ type: 'sfx', name: correct ? 'win' : 'gavel' }]);
     }

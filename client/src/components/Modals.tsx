@@ -401,7 +401,8 @@ export function SuggestionBanner({ state }: { state: MaskedState }) {
   if (!record || !info) return null;
 
   return (
-    <div className="callout" style={{ margin: '0 14px 10px' }}>
+    <div className="callout" style={{ margin: '0 14px 10px', position: 'relative' }}>
+      <span className="evtag">Exhibit {String(record.turn).padStart(2, '0')}</span>
       <b>{info.suggester?.name}</b> suggests <b>{SUSPECT_BY_ID[record.suspectId]?.name}</b> with the{' '}
       <b>{WEAPON_BY_ID[record.weaponId]?.name}</b> in the <b>{itemName('room', record.roomId)}</b>
       {record.disproverId ? (
