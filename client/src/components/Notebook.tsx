@@ -30,6 +30,18 @@ export function Notebook({ state, open, onClose }: Props) {
   const [scratch, setScratch] = useState(state.notes ?? '');
   const scratchDirty = useRef(false);
   const lastAuto = useRef<string>('');
+  const scratchRef = useRef<HTMLTextAreaElement | null>(null);
+
+  /**
+   * Save straight from the live DOM value. Reading React state here would use
+   * the render that created the handler, which is one keystroke behind when a
+   * player types and tabs away (or hits save) in the same tick.
+   */
+  const saveScratch = (value?: string) => {
+    const text = value ?? scratchRef.current?.value ?? '';
+    scratchDirty.current = false;
+    store.dispatch({ type: 'SET_SCRATCH', playerId: state.you, text });
+  };
 
   // Follow the authoritative notebook whenever the host sends a fresh copy.
   useEffect(() => {
@@ -64,16 +76,19 @@ export function Notebook({ state, open, onClose }: Props) {
     if (!scratchDirty.current) setScratch(state.notes ?? '');
   }, [state.notes]);
 
-  const cycle = (item: string, current: NotebookStamp | undefined) => {
-    const order: NotebookStamp[] = ['unknown', 'cleared', 'suspected', 'ruled'];
-    const idx = order.indexOf(current ?? 'unknown');
-    const next = order[(idx + 1) % order.length];
+  /**
+   * Tapping a stamp marks the item with it; tapping the stamp already showing
+   * rubs it out again. Predictable, and it matches what the buttons look like.
+   */
+  const mark = (item: string, target: NotebookStamp) => {
+    const current = stamps[item] ?? 'unknown';
+    const next: NotebookStamp = current === target ? 'unknown' : target;
     setStamps((s) => ({ ...s, [item]: next }));
     audio.stamp();
     store.dispatch({ type: 'SET_NOTE', playerId: state.you, item, stamp: next });
   };
 
-  const auto = (item: string) => knowledge.clearedItems.has(item) || knowledge.ruledOutItems.has(item);
+
 
   const rows = (kind: CardKind) => {
     const items = kind === 'suspect' ? SUSPECTS.map((s) => ({ id: s.id, name: s.name, color: s.color }))
@@ -81,7 +96,11 @@ export function Notebook({ state, open, onClose }: Props) {
       : ROOMS.map((r) => ({ id: r.id, name: r.name, color: '#6b4a1c' }));
     return items.map((it) => {
       const stamp = stamps[it.id] ?? 'unknown';
-      const locked = auto(it.id);
+      // Facts the engine has already proved are locked, so a tap can never fight
+      // the evidence and appear to do nothing.
+      const proved = knowledge.clearedItems.has(it.id);
+      const struck = knowledge.ruledOutItems.has(it.id);
+      const locked = proved || struck;
       return (
         <div className="nb-row" key={it.id}>
           <span
@@ -90,29 +109,34 @@ export function Notebook({ state, open, onClose }: Props) {
             aria-hidden
           />
           <span className={`nm${stamp === 'ruled' ? ' struck' : ''}`}>{it.name}</span>
-          <div className="stampr">
+          <div className="stampr" title={proved ? 'You have seen this card' : struck ? 'This card cannot be in the envelope' : undefined}>
             <button
               type="button"
               className={`stamp cleared${stamp === 'cleared' ? ' on' : ''}`}
               title="Confirmed innocent — I have seen this card"
-              onClick={() => cycle(it.id, stamp)}
-              disabled={locked && stamp === 'cleared'}
+              onClick={() => mark(it.id, 'cleared')}
+              disabled={locked}
+              style={locked ? { opacity: 0.85, cursor: 'default' } : undefined}
             >
               ✓
             </button>
             <button
               type="button"
               className={`stamp suspected${stamp === 'suspected' ? ' on' : ''}`}
-              title="Suspect / theory"
-              onClick={() => cycle(it.id, stamp)}
+              title={locked ? 'Already accounted for' : 'Mark as a live theory'}
+              onClick={() => mark(it.id, 'suspected')}
+              disabled={locked}
+              style={locked ? { opacity: 0.35, cursor: 'default' } : undefined}
             >
               ?
             </button>
             <button
               type="button"
               className={`stamp ruled${stamp === 'ruled' ? ' on' : ''}`}
-              title="Ruled out"
-              onClick={() => cycle(it.id, stamp)}
+              title={locked ? 'Already accounted for' : 'Strike out — this card is accounted for elsewhere'}
+              onClick={() => mark(it.id, 'ruled')}
+              disabled={locked}
+              style={locked ? { opacity: 0.35, cursor: 'default' } : undefined}
             >
               ✗
             </button>
@@ -199,6 +223,7 @@ export function Notebook({ state, open, onClose }: Props) {
               Notes
             </h3>
             <textarea
+              ref={scratchRef}
               value={scratch}
               placeholder="Who had the opportunity? Where were the servants at midnight?…"
               onChange={(e) => {
@@ -206,17 +231,13 @@ export function Notebook({ state, open, onClose }: Props) {
                 setScratch(e.target.value);
                 if (e.target.value.length % 12 === 0) audio.typeKey();
               }}
-              onBlur={() => {
-                scratchDirty.current = false;
-                store.dispatch({ type: 'SET_SCRATCH', playerId: state.you, text: scratch });
-              }}
+              onBlur={(e) => saveScratch(e.currentTarget.value)}
             />
             <div style={{ display: 'flex', gap: 8, alignItems: 'center' }}>
               <button
                 className="btn small"
                 onClick={() => {
-                  scratchDirty.current = false;
-                  store.dispatch({ type: 'SET_SCRATCH', playerId: state.you, text: scratch });
+                  saveScratch();
                   store.setNotice('Notes saved.');
                 }}
               >

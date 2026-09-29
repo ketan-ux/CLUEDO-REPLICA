@@ -23,11 +23,14 @@ export function Home({ meta, hasPlayers }: Props) {
     audio.unlock();
     setBusy(true);
     try {
+      // Claim Miss Scarlet's chair at your own table — the lady always moves
+      // first. If the seat is gone (joining someone else's case) the engine
+      // seats you at the first chair still free.
       store.dispatch({
         type: 'CLAIM_SEAT',
         playerId: meta.youId,
         name: name.trim() || 'Detective',
-        suspectId: SUSPECTS[Math.floor(Math.random() * SUSPECTS.length)].id,
+        suspectId: 'scarlet',
       });
     } finally {
       setBusy(false);
@@ -89,10 +92,19 @@ export function Home({ meta, hasPlayers }: Props) {
             Sign the guest book
           </div>
           {meta.error ? <div className="warnbox">{meta.error}</div> : null}
-          {!meta.serverAvailable ? (
+          {!meta.serverAvailable && !meta.booting ? (
             <div className="warnbox">
-              No relay is answering, so live rooms are unavailable in this browser. You can still play a full table
-              against the AI detectives.
+              <div>
+                No relay is answering, so live rooms are unavailable right now. You can still play a full table against
+                the AI detectives — and if the relay comes back this table goes live by itself.
+              </div>
+              <button
+                className="btn small"
+                style={{ marginTop: 8 }}
+                onClick={() => void store.retryRelay()}
+              >
+                ⟳ Check for live multiplayer
+              </button>
             </div>
           ) : null}
 
@@ -108,8 +120,12 @@ export function Home({ meta, hasPlayers }: Props) {
             />
           </label>
 
-          <button className="btn gold block" disabled={busy} onClick={sit}>
-            {hasPlayers ? '→ Return to the table' : '⚜ Sit at my own table'}
+          <button className="btn gold block" disabled={busy || meta.booting} onClick={sit}>
+            {meta.booting
+              ? 'Lighting the gas lamps…'
+              : hasPlayers
+                ? '→ Return to the table'
+                : '⚜ Sit at my own table'}
           </button>
 
           <div className="divider" />

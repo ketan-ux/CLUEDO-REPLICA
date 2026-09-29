@@ -33,8 +33,19 @@ browser tab (or another machine on the network) enters that code and is seated a
 detective. Down to playing alone? **Add AI detectives** from the lobby and the case will play itself
 out around you.
 
-> If the relay is unreachable the client silently falls back to a private offline table — the whole
-> game (rules, AI, audio, dice) runs in the browser with no server at all.
+`npm run preview` runs both services under a small supervisor that restarts either one if it dies,
+so a preview can never be left half-dead.
+
+### The app never depends on the network to be playable
+
+* The table exists **before** the relay is ever probed — the lobby, the deal, the AI and the audio all
+  work from the first frame.
+* If the relay is unreachable the app says so, keeps playing as a private table, and **watches for a
+  relay in the background**: the moment one answers, the same table (same room code) goes live
+  without a reload. There is a *Check for live multiplayer* button for an on-demand retry too.
+* If the relay dies mid-case, the host keeps playing and guests simply stop receiving updates until
+  it returns.
+* A closed host tab is the one thing that ends a relayed case, so the browser asks before you leave.
 
 ---
 

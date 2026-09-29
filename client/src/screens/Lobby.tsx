@@ -75,9 +75,14 @@ export function Lobby({ state, meta }: Props) {
                   {occupant && !occupant.connected ? <span className="tag elim">away</span> : null}
                 </div>
                 <div style={{ marginTop: 'auto', display: 'flex', gap: 6 }}>
-                  {!occupant ? (
-                    <button className="btn tiny" onClick={() => sit(s.id)} disabled={state.players.length >= 6 && !me}>
-                      Take {s.short}
+                  {!mine ? (
+                    <button
+                      className="btn tiny"
+                      onClick={() => sit(s.id)}
+                      disabled={!occupant && state.players.length >= 6}
+                      title={occupant ? `Swap seats with ${occupant.name}` : `Play ${s.name}`}
+                    >
+                      {occupant ? `Swap for ${s.short}` : `Take ${s.short}`}
                     </button>
                   ) : null}
                   {occupant?.isBot && (state.isHost || mine === false) ? (

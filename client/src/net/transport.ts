@@ -83,8 +83,16 @@ export function createTransport(opts: Options): Transport {
 
   function connect(): void {
     if (closed) return;
-    const proto = location.protocol === 'https:' ? 'wss' : 'ws';
-    const url = `${proto}://${location.host}/api/ws?code=${encodeURIComponent(
+    // Some embedded views and workers have no `location`; fall back to long-poll
+    // rather than throwing the whole table away.
+    const origin = typeof location !== 'undefined' && location?.host ? location : null;
+    if (!origin || typeof WebSocket === 'undefined') {
+      setStatus('polling');
+      void pollLoop();
+      return;
+    }
+    const proto = origin.protocol === 'https:' ? 'wss' : 'ws';
+    const url = `${proto}://${origin.host}/api/ws?code=${encodeURIComponent(
       opts.code,
     )}&peer=${encodeURIComponent(opts.peerId)}&role=${opts.role}`;
     try {

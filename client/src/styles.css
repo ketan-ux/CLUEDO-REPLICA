@@ -1146,8 +1146,12 @@ textarea::placeholder {
   padding: 0;
 }
 
-.stamp:hover {
+.stamp:hover:not(:disabled) {
   border-color: #7a1c1c;
+}
+
+.stamp:disabled {
+  cursor: default;
 }
 
 .stamp.on.cleared {

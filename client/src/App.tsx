@@ -152,6 +152,9 @@ export function App() {
             <div className="crest">✦</div>
             <h1>CLUEDO</h1>
             <div className="sub">lighting the gas lamps…</div>
+            <button className="btn small" style={{ marginTop: 18 }} onClick={() => void store.boot()}>
+              ⟳ Continue anyway
+            </button>
           </div>
         </div>
       ) : null}

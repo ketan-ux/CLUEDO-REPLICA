@@ -64,6 +64,8 @@ export interface StoreMeta {
   code: string;
   youId: string;
   name: string;
+  /** True until the first relay probe has settled. */
+  booting: boolean;
   serverAvailable: boolean;
   connection: TransportStatus | 'local';
   notice: string | null;
@@ -95,6 +97,8 @@ export class GameStore {
   private actionSeq = 0;
   private peerIds = new Set<string>();
   private booted = false;
+  private probeTimer: ReturnType<typeof setInterval> | null = null;
+  private probeBusy = false;
 
   constructor() {
     this.meta = {
@@ -102,6 +106,7 @@ export class GameStore {
       code: makeCode(),
       youId: loadPeerId(),
       name: safeStorage.get(STORAGE.name) ?? '',
+      booting: true,
       serverAvailable: false,
       connection: 'local',
       notice: null,
@@ -136,8 +141,16 @@ export class GameStore {
 
   /* ---------------- boot ---------------- */
 
-  async boot(): Promise<void> {
-    if (this.booted) return;
+  async boot(force = false): Promise<void> {
+    if (this.booted && !force) return;
+    if (this.booted && force) {
+      // The escape hatch on the loading card: guarantee a table exists, then
+      // let the normal probe run again when the caller forces it.
+      this.ensureMaster();
+      this.publish();
+      this.startProbing();
+      return;
+    }
     this.booted = true;
     if (typeof window !== 'undefined') {
       // Losing the host tab ends the case for everyone, so warn once.
@@ -149,14 +162,94 @@ export class GameStore {
         e.returnValue = 'You are hosting a live case. Leaving will end it for every detective.';
       });
     }
-    const available = await relayAvailable();
-    this.meta = { ...this.meta, serverAvailable: available };
-    if (available) {
-      await this.becomeHost(this.meta.code);
-    } else {
-      this.meta = { ...this.meta, mode: 'local', connection: 'local' };
+    // The table exists from the very first paint: whether or not a relay ever
+    // answers, the player can deal a hand and play. Relaying is an upgrade, not
+    // a prerequisite.
+    this.ensureMaster();
+    this.publish();
+
+    // Whatever the network does — DNS failure, a throwing constructor, an
+    // exotic environment — the table stays playable and the UI stops waiting.
+    let available = false;
+    try {
+      available = await relayAvailable(2600);
+      if (available) await this.becomeHost(this.meta.code);
+    } catch {
+      available = false;
     }
-    this.emit();
+    if (available) {
+      this.meta = { ...this.meta, serverAvailable: true, booting: false };
+    } else {
+      this.meta = { ...this.meta, serverAvailable: false, booting: false, mode: 'local', connection: 'local' };
+      this.startProbing();
+    }
+    this.ensureMaster();
+    this.publish();
+  }
+
+  /**
+   * Offline tables keep watching for a relay. If one appears — a cold start, a
+   * blip in the network, a proxy that was resting — the table goes live without
+   * the player having to reload or restart the case.
+   */
+  private startProbing(): void {
+    if (this.probeTimer) return;
+    this.probeTimer = setInterval(() => {
+      void this.probeOnce();
+    }, 10_000);
+  }
+
+  private async probeOnce(): Promise<void> {
+    if (this.probeBusy) return;
+    if (this.meta.mode !== 'local') {
+      this.stopProbing();
+      return;
+    }
+    this.probeBusy = true;
+    try {
+      if (await relayAvailable(2600)) {
+        this.stopProbing();
+        this.setMeta({ serverAvailable: true, error: null });
+        try {
+          await this.becomeHost(this.meta.code);
+          this.setNotice(`The relay is answering again — table ${this.meta.code} is live. Share the code.`);
+        } catch {
+          this.setMeta({ mode: 'local', connection: 'local' });
+        }
+      }
+    } finally {
+      this.probeBusy = false;
+    }
+  }
+
+  private stopProbing(): void {
+    if (this.probeTimer) clearInterval(this.probeTimer);
+    this.probeTimer = null;
+  }
+
+  /** Retry the relay on demand (the button on the home card). */
+  async retryRelay(): Promise<void> {
+    if (this.meta.mode !== 'local') return;
+    let up = false;
+    try {
+      up = await relayAvailable(2600);
+    } catch {
+      up = false;
+    }
+    if (!up) {
+      this.setMeta({ error: 'Still no relay answering. You can keep playing this private table.' });
+      return;
+    }
+    this.stopProbing();
+    this.setMeta({ serverAvailable: true, error: null });
+    try {
+      await this.becomeHost(this.meta.code);
+      this.setNotice(`Live multiplayer is on. Table code ${this.meta.code}.`);
+    } catch {
+      this.setMeta({ error: 'The relay answered but refused the connection. Playing this table privately.' });
+      this.setMeta({ mode: 'local', connection: 'local' });
+      this.startProbing();
+    }
   }
 
   setName(name: string): void {
@@ -180,7 +273,7 @@ export class GameStore {
 
   async becomeHost(code = this.meta.code): Promise<void> {
     this.meta = { ...this.meta, code, mode: 'online-host' };
-    this.master = this.master ?? createLobby(code);
+    if (!this.master || this.master.code !== code) this.master = createLobby(code);
     this.ensureHostFlag();
     this.connect('host');
     this.publish();
@@ -192,6 +285,7 @@ export class GameStore {
       this.setMeta({ error: `No table is answering on code ${code}. Check the letters, or host your own.` });
       return false;
     }
+    this.stopProbing();
     this.meta = { ...this.meta, code, mode: 'online-client', error: null };
     this.master = null;
     this.connect('client');
@@ -204,8 +298,10 @@ export class GameStore {
     this.transport?.close();
     this.transport = null;
     this.meta = { ...this.meta, mode: 'local', connection: 'local', code: makeCode(), peers: 0 };
-    this.master = this.master ?? createLobby(this.meta.code);
+    this.master = null;
+    this.ensureMaster();
     this.publish();
+    this.startProbing();
   }
 
   /* ---------------- messages ---------------- */
@@ -333,14 +429,22 @@ export class GameStore {
       this.transport?.send({ t: 'action', action, actionId });
       return;
     }
-    if (this.master) {
-      const applied = this.applyHost(action, action.playerId);
-      if (applied) {
-        this.publish();
-      } else if (!opts.silent && !opts.fromBot) {
-        this.setNotice(this.lastError);
-      }
+    this.ensureMaster();
+    const applied = this.applyHost(action, action.playerId);
+    if (applied) {
+      this.publish();
+    } else if (!opts.silent && !opts.fromBot) {
+      this.setNotice(this.lastError);
     }
+  }
+
+  /** The host always has a lobby, even before the relay has been probed. */
+  private ensureMaster(): GameState {
+    if (!this.master) {
+      this.master = createLobby(this.meta.code);
+      this.ensureHostFlag();
+    }
+    return this.master;
   }
 
   /** Notebook, scratchpad and modal dismissals are local-only concerns. */
@@ -516,6 +620,7 @@ export class GameStore {
   /** Stop every timer and socket — used when a tab leaves and by the tests. */
   shutdown(): void {
     this.clearTimers();
+    this.stopProbing();
     this.transport?.close();
     this.transport = null;
     this.listeners.clear();

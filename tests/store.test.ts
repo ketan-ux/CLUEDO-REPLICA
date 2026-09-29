@@ -64,7 +64,7 @@ const store = new Map<string, string>();
 
 const { store: gameStore } = await import('../client/src/store/gameStore.js');
 
-const tick = () => new Promise((r) => setTimeout(r, 5));
+const tick = (ms = 5) => new Promise((r) => setTimeout(r, ms));
 
 after(() => {
   gameStore.shutdown();
@@ -228,4 +228,69 @@ test('a tab that joins an existing room becomes a client, not a second host', as
   assert.equal(await client.joinRoom('ZZZZ'), false);
   assert.match(client.meta.error ?? '', /No table/i);
   client.shutdown();
+});
+
+test('with no relay at all the table is still dealt and playable', async () => {
+  // Regression: an unreachable relay used to leave the store with no game state
+  // at all, so the UI sat on its loading card and every click was dropped.
+  const { GameStore } = await import('../client/src/store/gameStore.js');
+  const offline = new GameStore();
+
+  (globalThis as any).fetch = async () => {
+    throw new Error('offline');
+  };
+  await offline.boot();
+  assert.equal(offline.meta.serverAvailable, false);
+  assert.equal(offline.meta.booting, false, 'the boot probe always settles');
+  assert.equal(offline.meta.mode, 'local');
+  assert.ok(offline.state, 'there is a table to play at even with no relay');
+  assert.equal(offline.state?.phase, 'LOBBY');
+
+  // Sitting down, filling the table and dealing all work offline.
+  offline.dispatch({ type: 'CLAIM_SEAT', playerId: offline.meta.youId, name: 'Solo', suspectId: 'scarlet' });
+  assert.equal(offline.hostState?.players.length, 1);
+  for (let i = 0; i < 3; i++) offline.dispatch({ type: 'ADD_BOT', playerId: offline.meta.youId });
+  assert.equal(offline.hostState?.players.length, 4);
+  offline.dispatch({ type: 'START_GAME', playerId: offline.meta.youId });
+  assert.equal(offline.state?.phase, 'ROLL');
+  assert.equal(offline.hostState?.envelope.length, 3);
+  assert.ok((offline.state?.hand.length ?? 0) > 0, 'the lone human still gets their cards');
+
+  // Miss Scarlet — the seat they asked for — moves first.
+  const me = offline.state!.players[offline.state!.turnIndex];
+  assert.equal(me.id, offline.meta.youId);
+  assert.equal(me.suspectId, 'scarlet');
+
+  // Turn order still works with no relay in sight.
+  offline.dispatch({ type: 'ROLL', playerId: offline.meta.youId });
+  assert.equal(offline.state?.phase, 'MOVE');
+  assert.ok((offline.state?.legalMoves.length ?? 0) > 0);
+
+  offline.shutdown();
+});
+
+test('a table that started offline goes live when a relay appears', async () => {
+  const { GameStore } = await import('../client/src/store/gameStore.js');
+  const store2 = new GameStore();
+  let up = false;
+  (globalThis as any).fetch = async (url: string) => {
+    if (String(url).includes('health')) {
+      if (!up) throw new Error('offline');
+      return { ok: true, json: async () => ({ ok: true }) } as unknown as Response;
+    }
+    return { ok: true, json: async () => ({ ok: true }) } as unknown as Response;
+  };
+
+  await store2.boot();
+  assert.equal(store2.meta.mode, 'local');
+  const code = store2.meta.code;
+
+  // The relay comes back; asking again should light up the same table.
+  up = true;
+  await store2.retryRelay();
+  assert.equal(store2.meta.serverAvailable, true);
+  assert.equal(store2.meta.mode, 'online-host', 'the table is now relayed');
+  assert.equal(store2.meta.code, code, 'and it keeps the same room code');
+  assert.equal(store2.meta.connection !== 'closed', true);
+  store2.shutdown();
 });
